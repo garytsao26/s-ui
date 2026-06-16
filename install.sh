@@ -10,7 +10,7 @@ cur_dir=$(pwd)
 # 检查 root 权限
 [[ $EUID -ne 0 ]] && echo -e "${red}致命错误：${plain}请使用 root 权限运行此脚本 \n " && exit 1
 
-# 检查 system 并设置 release 变量
+# 检查系统并设置 release 变量
 if [[ -f /etc/os-release ]]; then
     source /etc/os-release
     release=$ID
@@ -148,7 +148,7 @@ auto_configure_warp() {
     fi
     
     if [ ! -f "/tmp/wgcf_install/wgcf" ]; then
-        echo -e "${red}错误：下载 wgcf 核心工具失败，请检查服务器连接 Github 的 network。${plain}"
+        echo -e "${red}错误：下载 wgcf 核心工具失败，请检查服务器连接 Github 的网络。${plain}"
         cd / && rm -rf /tmp/wgcf_install
         return 0
     fi
@@ -218,6 +218,7 @@ install_s-ui() {
 
     systemctl enable s-ui --now
 
+    # 动态跑完底层的专属 WARP 申请与拉起
     auto_configure_warp
 
     echo -e "${green}s-ui ${last_version}${plain} 安装完成，现已启动并运行..."
@@ -226,16 +227,16 @@ install_s-ui() {
     /usr/local/s-ui/sui uri
     echo -e "${plain}"
     
-    # 动态补偿抓取外网 IP 并提取刚才在面板里设置的端口与路径
-    GLOBAL_IP=$(curl -s -4 ip.sb || curl -s -4 ifconfig.me)
-    REAL_PORT=$([ -n "$config_port" ] && echo "$config_port" || echo "15427")
-    REAL_PATH=$([ -n "$config_path" ] && echo "$config_path" || echo "nats")
-    
-    # 清洗一下路径格式，确保其正常显示
-    REAL_PATH=$(echo "$REAL_PATH" | sed 's/^\///g' | sed 's/\/$//g')
-
+    # === 补充：动态提取当前实际生效的配置并抓取外网 IP 打印公网访问链接 ===
+    GLOBAL_IP=$(curl -s -4 --max-time 3 ip.sb || curl -s -4 --max-time 3 ifconfig.me)
     if [ -n "$GLOBAL_IP" ]; then
-        echo -e "Global address:"
+        REAL_PORT=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "port" | awk '{print $2}' | tr -dc '0-9')
+        REAL_PATH=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "path" | awk '{print $2}' | tr -dc 'a-zA-Z0-9/')
+        [ -z "$REAL_PORT" ] && REAL_PORT="2095"
+        [ -z "$REAL_PATH" ] && REAL_PATH="app"
+        REAL_PATH=$(echo "$REAL_PATH" | sed 's/^\///g' | sed 's/\/$//g')
+        
+        echo -e "Global address (公网访问地址):"
         echo -e "${green}http://${GLOBAL_IP}:${REAL_PORT}/${REAL_PATH}/${plain}\n"
     fi
 
