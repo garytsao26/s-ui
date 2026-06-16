@@ -97,43 +97,44 @@ prepare_services() {
 auto_configure_warp() {
     echo -e "${yellow}正在动态申请并配置当前服务器专属的 WARP 纯净网口...${plain}"
     
-    # 1. 创建临时目录并分析架构
+    # 1. 创建并彻底进入临时工作目录
     mkdir -p /tmp/wgcf_install && cd /tmp/wgcf_install
     local current_arch=$(arch)
     
-    # 2. 匹配架构自动抓取官方精确下载路径（修复后的版本，移除latest模糊路径）
+    # 2. 匹配架构自动抓取官方精确下载路径（修复 404 链接并锁死绝对路径）
     if [ "${current_arch}" = "amd64" ]; then
-        curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64" -o wgcf
+        curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64" -o /tmp/wgcf_install/wgcf
     elif [ "${current_arch}" = "arm64" ]; then
-        curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_arm64" -o wgcf
+        curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_arm64" -o /tmp/wgcf_install/wgcf
     else
         echo -e "${red}不受支持的架构，跳过自动化 WARP 配置。${plain}"
         cd / && rm -rf /tmp/wgcf_install
         return 0
     fi
     
-    # 3. 拦截诊断：检查文件是否下载成功，防止404后继续运行报错
-    if [ ! -f "wgcf" ]; then
+    # 3. 拦截诊断：检查文件是否下载成功
+    if [ ! -f "/tmp/wgcf_install/wgcf" ]; then
         echo -e "${red}错误：下载 wgcf 核心工具失败，请检查服务器连接 Github 的网络。${plain}"
         cd / && rm -rf /tmp/wgcf_install
         return 0
     fi
     
-    chmod +x wgcf
+    # 4. 显式指定绝对路径赋予执行权限
+    chmod +x /tmp/wgcf_install/wgcf
 
-    # 4. 动态向 Cloudflare 注册新设备并本地落地密钥对
-    ./wgcf register --accept-tos --quiet
-    ./wgcf generate --quiet
+    # 5. 动态向 Cloudflare 注册新设备并本地落地密钥对
+    /tmp/wgcf_install/wgcf register --accept-tos --quiet
+    /tmp/wgcf_install/wgcf generate --quiet
 
-    # 5. 关键配置：强行改造成不抢主网流量的分流网口
-    if [ -f "wgcf-profile.conf" ]; then
+    # 6. 关键配置：强行改造成不抢主网流量的分流网口
+    if [ -f "/tmp/wgcf_install/wgcf-profile.conf" ]; then
         mkdir -p /etc/wireguard/
         
         # 精准在 [Interface] 字段的正下方静默注入 Table = off，确保绝不抢占原生全局路由
-        sed '/\[Interface\]/a Table = off' wgcf-profile.conf > /etc/wireguard/wg0.conf
+        sed '/\[Interface\]/a Table = off' /tmp/wgcf_install/wgcf-profile.conf > /etc/wireguard/wg0.conf
         chmod 600 /etc/wireguard/wg0.conf
         
-        # 6. 自动启动并固定开机自启
+        # 7. 自动启动并固定开机自启
         wg-quick down wg0 &> /dev/null
         wg-quick up wg0
         systemctl enable wg-quick@wg0
@@ -191,7 +192,7 @@ install_s-ui() {
 
     systemctl enable s-ui --now
 
-    # 在面板主程序完全跑起来后，执行 WARP 自动化配置
+    # 在面板主程序完全跑起来后，顺手执行 WARP 自动化配置
     auto_configure_warp
 
     echo -e "${green}s-ui ${last_version}${plain} 安装完成，现已启动并运行..."
