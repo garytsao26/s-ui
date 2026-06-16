@@ -101,7 +101,7 @@ auto_configure_warp() {
     mkdir -p /tmp/wgcf_install && cd /tmp/wgcf_install
     local current_arch=$(arch)
     
-    # 2. 匹配架构自动抓取官方精确下载路径（修复 404 链接并锁死绝对路径）
+    # 2. 匹配架构自动抓取官方精确下载路径
     if [ "${current_arch}" = "amd64" ]; then
         curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64" -o /tmp/wgcf_install/wgcf
     elif [ "${current_arch}" = "arm64" ]; then
@@ -119,12 +119,12 @@ auto_configure_warp() {
         return 0
     fi
     
-    # 4. 显式指定绝对路径赋予执行权限
+    # 4. 赋予执行权限
     chmod +x /tmp/wgcf_install/wgcf
 
-    # 5. 动态向 Cloudflare 注册新设备并本地落地密钥对
-    /tmp/wgcf_install/wgcf register --accept-tos --quiet
-    /tmp/wgcf_install/wgcf generate --quiet
+    # 5. 动态向 Cloudflare 注册新设备并本地落地密钥对（精准移除导致报错的 --quiet 错误参数）
+    /tmp/wgcf_install/wgcf register --accept-tos
+    /tmp/wgcf_install/wgcf generate
 
     # 6. 关键配置：强行改造成不抢主网流量的分流网口
     if [ -f "/tmp/wgcf_install/wgcf-profile.conf" ]; then
@@ -192,7 +192,7 @@ install_s-ui() {
 
     systemctl enable s-ui --now
 
-    # 在面板主程序完全跑起来后，顺手执行 WARP 自动化配置
+    # 执行最终修正后的 WARP 自动化配置
     auto_configure_warp
 
     echo -e "${green}s-ui ${last_version}${plain} 安装完成，现已启动并运行..."
