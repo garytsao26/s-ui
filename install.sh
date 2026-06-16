@@ -148,7 +148,7 @@ auto_configure_warp() {
     fi
     
     if [ ! -f "/tmp/wgcf_install/wgcf" ]; then
-        echo -e "${red}错误：下载 wgcf 核心工具失败，请检查服务器连接 Github 的网络。${plain}"
+        echo -e "${red}错误：下载 wgcf 核心工具失败，请检查服务器连接 Github 的 network。${plain}"
         cd / && rm -rf /tmp/wgcf_install
         return 0
     fi
@@ -218,13 +218,27 @@ install_s-ui() {
 
     systemctl enable s-ui --now
 
-    # 仅在脚本末尾无缝插入独立配置网口，不再改动你的原有任何前端逻辑
     auto_configure_warp
 
     echo -e "${green}s-ui ${last_version}${plain} 安装完成，现已启动并运行..."
-    echo -e "你可以通过以下 URL 访问面板：${green}"
+    echo -e "你可以通过以下 URL 访问面板："
+    echo -e "${green}"
     /usr/local/s-ui/sui uri
     echo -e "${plain}"
+    
+    # 动态补偿抓取外网 IP 并提取刚才在面板里设置的端口与路径
+    GLOBAL_IP=$(curl -s -4 ip.sb || curl -s -4 ifconfig.me)
+    REAL_PORT=$([ -n "$config_port" ] && echo "$config_port" || echo "15427")
+    REAL_PATH=$([ -n "$config_path" ] && echo "$config_path" || echo "nats")
+    
+    # 清洗一下路径格式，确保其正常显示
+    REAL_PATH=$(echo "$REAL_PATH" | sed 's/^\///g' | sed 's/\/$//g')
+
+    if [ -n "$GLOBAL_IP" ]; then
+        echo -e "Global address:"
+        echo -e "${green}http://${GLOBAL_IP}:${REAL_PORT}/${REAL_PATH}/${plain}\n"
+    fi
+
     echo -e ""
     s-ui help
 }
