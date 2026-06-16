@@ -23,7 +23,7 @@ else
 fi
 echo "当前系统发行版为：$release"
 
-arch() {
+get_arch() {
     case "$(uname -m)" in
     x86_64 | x64 | amd64) echo 'amd64' ;;
     i*86 | x86) echo '386' ;;
@@ -36,7 +36,7 @@ arch() {
     esac
 }
 
-echo "架构：$(arch)"
+echo "架构：$(get_arch)"
 
 install_base() {
     case "${release}" in
@@ -53,7 +53,7 @@ install_base() {
         zypper refresh && zypper -q install -y wget curl tar timezone jq wireguard-tools
         ;;
     *)
-        apt-get update && apt-get install -y -q wget curl tar tzdata jq wireguard
+        apt-get update && apt-get install -y -q wget curl tar tzdata jq wireguard-tools
         ;;
     esac
 }
@@ -63,7 +63,7 @@ config_after_install() {
     /usr/local/s-ui/sui migrate
 
     echo -e "${yellow}安装/更新完成！出于安全考虑，建议修改面板设置 ${plain}"
-    read -p "是否继续修改设置 [y/n]？": config_confirm
+    read -p "是否继续修改设置 [y/n]？" config_confirm
     if [[ "${config_confirm}" == "y" || "${config_confirm}" == "Y" ]]; then
         echo -e "请输入${yellow}面板端口${plain}（留空则使用现有/默认值）："
         read config_port
@@ -85,15 +85,16 @@ config_after_install() {
         [ -z "$config_subPath" ] || params="$params -subPath $config_subPath"
         /usr/local/s-ui/sui setting ${params}
 
-        read -p "是否修改管理员账号密码 [y/n]？": admin_confirm
+        read -p "是否修改管理员账号密码 [y/n]？" admin_confirm
         if [[ "${admin_confirm}" == "y" || "${admin_confirm}" == "Y" ]]; then
             # 首个管理员账号密码
             read -p "请设置用户名：" config_account
-            read -p "请设置密码：" config_password
+            read -s -p "请设置密码：" config_password
+            echo ""
 
-            # 设置账号密码
+            # 设置账号密码（避免密码出现在命令行参数中）
             echo -e "${yellow}正在初始化，请稍候...${plain}"
-            /usr/local/s-ui/sui admin -username ${config_account} -password ${config_password}
+            /usr/local/s-ui/sui admin -username "${config_account}" -password "${config_password}"
         else
             echo -e "${yellow}当前管理员账号密码：${plain}"
             /usr/local/s-ui/sui admin -show
@@ -109,7 +110,7 @@ config_after_install() {
             echo -e "${green}密码：${passwordTemp}${plain}"
             echo -e "###############################################"
             echo -e "${red}如果忘记登录信息，可以输入 ${green}s-ui${red} 打开配置菜单${plain}"
-            /usr/local/s-ui/sui admin -username ${usernameTemp} -password ${passwordTemp}
+            /usr/local/s-ui/sui admin -username "${usernameTemp}" -password "${passwordTemp}"
         else
             echo -e "${red}这是升级安装，将保留旧设置；如果忘记登录信息，可以输入 ${green}s-ui${red} 打开配置菜单${plain}"
         fi
@@ -131,49 +132,112 @@ prepare_services() {
     systemctl daemon-reload
 }
 
-auto_configure_warp() {
-    echo -e "${yellow}正在动态申请并配置当前服务器专属的 WARP 纯净网口...${plain}"
-    
-    mkdir -p /tmp/wgcf_install && cd /tmp/wgcf_install
-    local current_arch=$(arch)
-    
+# ============================================================
+# WARP wg0 网络接口配置
+# 用途：为 s-ui / sing-box 提供分流出口，需要分流的流量
+#       可在 sing-box 出站规则中指定 bind_interface = "wg0"
+# ============================================================
+setup_warp_interface() {
+    echo -e "${yellow}======================================================${plain}"
+    echo -e "${yellow}  正在配置 WARP wg0 网络接口（用于后续分流）${plain}"
+    echo -e "${yellow}======================================================${plain}"
+
+    local current_arch=$(get_arch)
+    local wgcf_bin="/usr/local/bin/wgcf"
+    local wgcf_ver="2.2.22"
+    local wgcf_url=""
+
+    # 仅支持 amd64 / arm64
     if [ "${current_arch}" = "amd64" ]; then
-        curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64" -o /tmp/wgcf_install/wgcf
+        wgcf_url="https://github.com/ViRb3/wgcf/releases/download/v${wgcf_ver}/wgcf_${wgcf_ver}_linux_amd64"
     elif [ "${current_arch}" = "arm64" ]; then
-        curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_arm64" -o /tmp/wgcf_install/wgcf
+        wgcf_url="https://github.com/ViRb3/wgcf/releases/download/v${wgcf_ver}/wgcf_${wgcf_ver}_linux_arm64"
     else
-        echo -e "${red}不受支持的架构，跳过自动化 WARP 配置。${plain}"
-        cd / && rm -rf /tmp/wgcf_install
-        return 0
-    fi
-    
-    if [ ! -f "/tmp/wgcf_install/wgcf" ]; then
-        echo -e "${red}错误：下载 wgcf 核心工具失败，请检查服务器连接 Github 的网络。${plain}"
-        cd / && rm -rf /tmp/wgcf_install
-        return 0
-    fi
-    
-    chmod +x /tmp/wgcf_install/wgcf
-    /tmp/wgcf_install/wgcf register --accept-tos
-    /tmp/wgcf_install/wgcf generate
-
-    if [ -f "/tmp/wgcf_install/wgcf-profile.conf" ]; then
-        mkdir -p /etc/wireguard/
-        sed '/\[Interface\]/a Table = off' /tmp/wgcf_install/wgcf-profile.conf > /etc/wireguard/wg0.conf
-        chmod 600 /etc/wireguard/wg0.conf
-        
-        wg-quick down wg0 &> /dev/null
-        wg-quick up wg0
-        systemctl enable wg-quick@wg0
-        echo -e "${green}=== 专属网口 wg0 已经由脚本在本地动态填充并安全拉起！ ===${plain}"
-    else
-        echo -e "${red}警告：向 Cloudflare 动态获取专属凭证失败，请检查服务器网络。${plain}"
+        echo -e "${red}当前架构 (${current_arch}) 暂不支持自动配置 WARP，请手动配置 wg0。${plain}"
+        return 1
     fi
 
-    cd / && rm -rf /tmp/wgcf_install
+    # ---------- 1. 下载 wgcf ----------
+    echo -e "${yellow}[1/5] 下载 wgcf 工具...${plain}"
+    curl -fsSL "${wgcf_url}" -o "${wgcf_bin}"
+    if [ ! -f "${wgcf_bin}" ]; then
+        echo -e "${red}错误：wgcf 下载失败，请检查服务器能否访问 GitHub。${plain}"
+        return 1
+    fi
+    chmod +x "${wgcf_bin}"
+
+    # ---------- 2. 注册 WARP 账号并生成配置 ----------
+    echo -e "${yellow}[2/5] 向 Cloudflare WARP 注册专属账号...${plain}"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    (
+        cd "${tmp_dir}"
+        "${wgcf_bin}" register --accept-tos
+        "${wgcf_bin}" generate
+    )
+
+    local profile="${tmp_dir}/wgcf-profile.conf"
+    if [ ! -f "${profile}" ]; then
+        echo -e "${red}错误：未能生成 wgcf-profile.conf，WARP 注册可能失败。${plain}"
+        rm -rf "${tmp_dir}"
+        return 1
+    fi
+
+    # ---------- 3. 写入 /etc/wireguard/wg0.conf ----------
+    # 关键：添加 Table = off，避免 wg0 接管全局路由，
+    # 保持宿主机默认路由不变，仅作为分流出口使用。
+    echo -e "${yellow}[3/5] 写入 /etc/wireguard/wg0.conf（Table=off 模式，不劫持全局路由）...${plain}"
+    mkdir -p /etc/wireguard
+
+    # 先建文件并锁权限，再写内容，避免短暂的权限暴露窗口
+    install -m 600 /dev/null /etc/wireguard/wg0.conf
+    sed '/^\[Interface\]/a Table = off' "${profile}" > /etc/wireguard/wg0.conf
+
+    rm -rf "${tmp_dir}"
+
+    # ---------- 4. 启动 wg0 ----------
+    echo -e "${yellow}[4/5] 启动 wg0 接口...${plain}"
+    # 若已存在则先关闭
+    wg-quick down wg0 &>/dev/null || true
+    if wg-quick up wg0; then
+        echo -e "${green}wg0 接口已成功拉起！${plain}"
+    else
+        echo -e "${red}错误：wg0 启动失败，请检查 /etc/wireguard/wg0.conf 内容。${plain}"
+        return 1
+    fi
+
+    # ---------- 5. 设置开机自启 ----------
+    echo -e "${yellow}[5/5] 设置 wg-quick@wg0 开机自启...${plain}"
+    systemctl enable wg-quick@wg0
+
+    # ---------- 验证：打印接口状态与 IP ----------
+    echo -e "${green}======================================================${plain}"
+    echo -e "${green}  WARP wg0 接口配置完成！${plain}"
+    echo -e "${green}======================================================${plain}"
+    echo -e "接口状态："
+    wg show wg0 2>/dev/null || ip link show wg0
+
+    local wg0_ip
+    wg0_ip=$(ip -4 addr show wg0 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+    if [ -n "${wg0_ip}" ]; then
+        echo -e "wg0 分配地址：${green}${wg0_ip}${plain}"
+    fi
+
+    echo -e ""
+    echo -e "${yellow}【分流使用说明】${plain}"
+    echo -e "在 sing-box 出站配置中，对需要走 WARP 的出站节点加入："
+    echo -e "  ${green}\"bind_interface\": \"wg0\"${plain}"
+    echo -e "示例（直连出站改走 WARP）："
+    echo -e '  {'
+    echo -e '    "type": "direct",'
+    echo -e '    "tag": "warp-out",'
+    echo -e '    "bind_interface": "wg0"'
+    echo -e '  }'
+    echo -e "然后在路由规则中将目标域名/IP 指向 \"warp-out\" 出站即可完成分流。"
+    echo -e "${green}======================================================${plain}"
 }
 
-install_s-ui() {
+install_sui() {
     cd /tmp/
 
     if [ $# == 0 ]; then
@@ -183,7 +247,7 @@ install_s-ui() {
             exit 1
         fi
         echo -e "已获取 s-ui 最新版本：${last_version}，开始安装..."
-        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(arch).tar.gz https://github.com/frankgoing/s-ui/releases/download/${last_version}/s-ui-linux-$(arch).tar.gz
+        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(get_arch).tar.gz https://github.com/frankgoing/s-ui/releases/download/${last_version}/s-ui-linux-$(get_arch).tar.gz
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 s-ui 失败，请确认服务器可以访问 Github ${plain}"
             exit 1
@@ -191,9 +255,9 @@ install_s-ui() {
     else
         last_version=$1
         [[ "${last_version}" != v* ]] && last_version="v${last_version}"
-        url="https://github.com/frankgoing/s-ui/releases/download/${last_version}/s-ui-linux-$(arch).tar.gz"
+        url="https://github.com/frankgoing/s-ui/releases/download/${last_version}/s-ui-linux-$(get_arch).tar.gz"
         echo -e "开始安装 s-ui ${last_version}"
-        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(arch).tar.gz ${url}
+        wget -N --no-check-certificate -O /tmp/s-ui-linux-$(get_arch).tar.gz ${url}
         if [[ $? -ne 0 ]]; then
             echo -e "${red}下载 s-ui ${last_version} 失败，请检查该版本是否存在${plain}"
             exit 1
@@ -204,8 +268,8 @@ install_s-ui() {
         systemctl stop s-ui
     fi
 
-    tar zxvf s-ui-linux-$(arch).tar.gz
-    rm s-ui-linux-$(arch).tar.gz -f
+    tar zxvf s-ui-linux-$(get_arch).tar.gz
+    rm s-ui-linux-$(get_arch).tar.gz -f
 
     chmod +x s-ui/sui s-ui/s-ui.sh
     cp s-ui/s-ui.sh /usr/bin/s-ui
@@ -213,37 +277,22 @@ install_s-ui() {
     cp -f s-ui/*.service /etc/systemd/system/
     rm -rf s-ui
 
-    config_after_install
     prepare_services
+    config_after_install
 
     systemctl enable s-ui --now
 
-    # 动态跑完底层的专属 WARP 申请与拉起
-    auto_configure_warp
+    # 配置 WARP wg0 分流接口
+    setup_warp_interface
 
     echo -e "${green}s-ui ${last_version}${plain} 安装完成，现已启动并运行..."
-    echo -e "你可以通过以下 URL 访问面板："
-    echo -e "${green}"
+    echo -e "你可以通过以下 URL 访问面板：${green}"
     /usr/local/s-ui/sui uri
     echo -e "${plain}"
-    
-    # === 补充：动态提取当前实际生效的配置并抓取外网 IP 打印公网访问链接 ===
-    GLOBAL_IP=$(curl -s -4 --max-time 3 ip.sb || curl -s -4 --max-time 3 ifconfig.me)
-    if [ -n "$GLOBAL_IP" ]; then
-        REAL_PORT=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "port" | awk '{print $2}' | tr -dc '0-9')
-        REAL_PATH=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "path" | awk '{print $2}' | tr -dc 'a-zA-Z0-9/')
-        [ -z "$REAL_PORT" ] && REAL_PORT="2095"
-        [ -z "$REAL_PATH" ] && REAL_PATH="app"
-        REAL_PATH=$(echo "$REAL_PATH" | sed 's/^\///g' | sed 's/\/$//g')
-        
-        echo -e "Global address (公网访问地址):"
-        echo -e "${green}http://${GLOBAL_IP}:${REAL_PORT}/${REAL_PATH}/${plain}\n"
-    fi
-
     echo -e ""
     s-ui help
 }
 
 echo -e "${green}正在执行...${plain}"
 install_base
-install_s-ui $1
+install_sui $1
