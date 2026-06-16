@@ -289,6 +289,24 @@ install_sui() {
     echo -e "你可以通过以下 URL 访问面板：${green}"
     /usr/local/s-ui/sui uri
     echo -e "${plain}"
+
+    # 获取公网 IP 并拼接真实访问地址
+    echo -e "${yellow}正在获取公网 IP...${plain}"
+    PUBLIC_IP=$(curl -s --max-time 5 ip.sb || curl -s --max-time 5 ifconfig.me || curl -s --max-time 5 api.ipify.org)
+    if [ -n "$PUBLIC_IP" ]; then
+        # 从 sui setting 输出中提取当前生效的端口和路径
+        PANEL_PORT=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "^port" | awk '{print $2}' | tr -dc '0-9')
+        PANEL_PATH=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "^path" | awk '{print $2}' | tr -dc 'a-zA-Z0-9/_-')
+        [ -z "$PANEL_PORT" ] && PANEL_PORT="2095"
+        [ -z "$PANEL_PATH" ] && PANEL_PATH="app"
+        # 去掉首尾多余的斜杠
+        PANEL_PATH=$(echo "$PANEL_PATH" | sed 's:^/*::;s:/*$::')
+        echo -e "公网访问地址："
+        echo -e "${green}http://${PUBLIC_IP}:${PANEL_PORT}/${PANEL_PATH}/${plain}"
+    else
+        echo -e "${red}获取公网 IP 失败，请手动执行 curl ip.sb 查询后自行拼接访问地址。${plain}"
+    fi
+
     echo -e ""
     s-ui help
 }
