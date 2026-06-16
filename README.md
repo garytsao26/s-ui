@@ -36,11 +36,11 @@
 
 ### Linux/macOS
 ```sh
-bash <(curl -Ls https://raw.githubusercontent.com/frankgoing/s-ui/main/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/garytsao26/s-ui/main/install.sh)
 ```
 
 ### Windows
-1. 从 [GitHub Releases](https://github.com/frankgoing/s-ui/releases/latest) 下载最新 Windows 版本。
+1. 从 [GitHub Releases](https://github.com/garytsao26/s-ui/releases/latest) 下载最新 Windows 版本。
 2. 解压 ZIP 文件。
 3. 以管理员身份运行 `install-windows.bat`。
 4. 按照安装向导操作。
