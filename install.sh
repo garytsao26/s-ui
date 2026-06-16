@@ -87,12 +87,9 @@ config_after_install() {
 
         read -p "是否修改管理员账号密码 [y/n]？" admin_confirm
         if [[ "${admin_confirm}" == "y" || "${admin_confirm}" == "Y" ]]; then
-            # 首个管理员账号密码
             read -p "请设置用户名：" config_account
             read -s -p "请设置密码：" config_password
             echo ""
-
-            # 设置账号密码（避免密码出现在命令行参数中）
             echo -e "${yellow}正在初始化，请稍候...${plain}"
             /usr/local/s-ui/sui admin -username "${config_account}" -password "${config_password}"
         else
@@ -147,7 +144,6 @@ setup_warp_interface() {
     local wgcf_ver="2.2.22"
     local wgcf_url=""
 
-    # 仅支持 amd64 / arm64
     if [ "${current_arch}" = "amd64" ]; then
         wgcf_url="https://github.com/ViRb3/wgcf/releases/download/v${wgcf_ver}/wgcf_${wgcf_ver}_linux_amd64"
     elif [ "${current_arch}" = "arm64" ]; then
@@ -184,21 +180,19 @@ setup_warp_interface() {
     fi
 
     # ---------- 3. 写入 /etc/wireguard/wg0.conf ----------
-    # 关键：添加 Table = off，避免 wg0 接管全局路由，
-    # 保持宿主机默认路由不变，仅作为分流出口使用。
     echo -e "${yellow}[3/5] 写入 /etc/wireguard/wg0.conf（Table=off 模式，不劫持全局路由）...${plain}"
     mkdir -p /etc/wireguard
-
-    # 先建文件并锁权限，再写内容，避免短暂的权限暴露窗口
     install -m 600 /dev/null /etc/wireguard/wg0.conf
     sed '/^\[Interface\]/a Table = off' "${profile}" > /etc/wireguard/wg0.conf
-
     rm -rf "${tmp_dir}"
 
     # ---------- 4. 启动 wg0 ----------
     echo -e "${yellow}[4/5] 启动 wg0 接口...${plain}"
+    # 先彻底清理，无论之前是手动还是 systemd 拉起的
+    systemctl stop wg-quick@wg0 &>/dev/null || true
     wg-quick down wg0 &>/dev/null || true
-    if wg-quick up wg0; then
+    # 统一交由 systemd 管理，避免 active/inactive 不一致
+    if systemctl start wg-quick@wg0; then
         echo -e "${green}wg0 接口已成功拉起！${plain}"
     else
         echo -e "${red}错误：wg0 启动失败，请检查 /etc/wireguard/wg0.conf 内容。${plain}"
