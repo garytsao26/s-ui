@@ -41,19 +41,19 @@ echo "架构：$(arch)"
 install_base() {
     case "${release}" in
     centos | almalinux | rocky | oracle)
-        yum -y update && yum install -y -q wget curl tar tzdata
+        yum -y update && yum install -y -q wget curl tar tzdata jq wireguard-tools
         ;;
     fedora)
-        dnf -y update && dnf install -y -q wget curl tar tzdata
+        dnf -y update && dnf install -y -q wget curl tar tzdata jq wireguard-tools
         ;;
     arch | manjaro | parch)
-        pacman -Syu && pacman -Syu --noconfirm wget curl tar tzdata
+        pacman -Syu && pacman -Syu --noconfirm wget curl tar tzdata jq wireguard-tools
         ;;
     opensuse-tumbleweed)
-        zypper refresh && zypper -q install -y wget curl tar timezone
+        zypper refresh && zypper -q install -y wget curl tar timezone jq wireguard-tools
         ;;
     *)
-        apt-get update && apt-get install -y -q wget curl tar tzdata
+        apt-get update && apt-get install -y -q wget curl tar tzdata jq wireguard
         ;;
     esac
 }
@@ -62,57 +62,20 @@ config_after_install() {
     echo -e "${yellow}正在迁移... ${plain}"
     /usr/local/s-ui/sui migrate
 
-    echo -e "${yellow}安装/更新完成！出于安全考虑，建议修改面板设置 ${plain}"
-    read -p "是否继续修改设置 [y/n]？": config_confirm
-    if [[ "${config_confirm}" == "y" || "${config_confirm}" == "Y" ]]; then
-        echo -e "请输入${yellow}面板端口${plain}（留空则使用现有/默认值）："
-        read config_port
-        echo -e "请输入${yellow}面板路径${plain}（留空则使用现有/默认值）："
-        read config_path
-
-        # 订阅配置
-        echo -e "请输入${yellow}订阅端口${plain}（留空则使用现有/默认值）："
-        read config_subPort
-        echo -e "请输入${yellow}订阅路径${plain}（留空则使用现有/默认值）："
-        read config_subPath
-
-        # 设置配置
-        echo -e "${yellow}正在初始化，请稍候...${plain}"
-        params=""
-        [ -z "$config_port" ] || params="$params -port $config_port"
-        [ -z "$config_path" ] || params="$params -path $config_path"
-        [ -z "$config_subPort" ] || params="$params -subPort $config_subPort"
-        [ -z "$config_subPath" ] || params="$params -subPath $config_subPath"
-        /usr/local/s-ui/sui setting ${params}
-
-        read -p "是否修改管理员账号密码 [y/n]？": admin_confirm
-        if [[ "${admin_confirm}" == "y" || "${admin_confirm}" == "Y" ]]; then
-            # 首个管理员账号密码
-            read -p "请设置用户名：" config_account
-            read -p "请设置密码：" config_password
-
-            # 设置账号密码
-            echo -e "${yellow}正在初始化，请稍候...${plain}"
-            /usr/local/s-ui/sui admin -username ${config_account} -password ${config_password}
-        else
-            echo -e "${yellow}当前管理员账号密码：${plain}"
-            /usr/local/s-ui/sui admin -show
-        fi
+    echo -e "${yellow}开始自动化配置面板登录信息... ${plain}"
+    
+    if [[ ! -f "/usr/local/s-ui/db/s-ui.db" ]]; then
+        local usernameTemp=$(head -c 6 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
+        local passwordTemp=$(head -c 6 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
+        echo -e "这是全新安装，已自动生成随机登录信息："
+        echo -e "###############################################"
+        echo -e "${green}用户名：${usernameTemp}${plain}"
+        echo -e "${green}密码：${passwordTemp}${plain}"
+        echo -e "###############################################"
+        echo -e "${red}如果忘记登录信息，可以输入 ${green}s-ui${red} 打开配置菜单${plain}"
+        /usr/local/s-ui/sui admin -username ${usernameTemp} -password ${passwordTemp}
     else
-        echo -e "${red}已取消...${plain}"
-        if [[ ! -f "/usr/local/s-ui/db/s-ui.db" ]]; then
-            local usernameTemp=$(head -c 6 /dev/urandom | base64)
-            local passwordTemp=$(head -c 6 /dev/urandom | base64)
-            echo -e "这是全新安装，出于安全考虑将生成随机登录信息："
-            echo -e "###############################################"
-            echo -e "${green}用户名：${usernameTemp}${plain}"
-            echo -e "${green}密码：${passwordTemp}${plain}"
-            echo -e "###############################################"
-            echo -e "${red}如果忘记登录信息，可以输入 ${green}s-ui${red} 打开配置菜单${plain}"
-            /usr/local/s-ui/sui admin -username ${usernameTemp} -password ${passwordTemp}
-        else
-            echo -e "${red}这是升级安装，将保留旧设置；如果忘记登录信息，可以输入 ${green}s-ui${red} 打开配置菜单${plain}"
-        fi
+        echo -e "${yellow}这是升级安装，已自动保留您旧的面板设置。${plain}"
     fi
 }
 
@@ -129,6 +92,53 @@ prepare_services() {
         echo -e "###############################################################"
     fi
     systemctl daemon-reload
+}
+
+# ==========================================================
+# 新增函数：完全静默、动态注册并配置专属的纯净 WARP wg0 网口
+# ==========================================================
+auto_configure_warp() {
+    echo -e "${yellow}正在动态申请并配置当前服务器专属的 WARP 纯净网口...${plain}"
+    
+    # 1. 创建临时目录并分析架构
+    mkdir -p /tmp/wgcf_install && cd /tmp/wgcf_install
+    local current_arch=$(arch)
+    
+    # 2. 匹配架构自动抓取官方最新的账户生成工具
+    if [ "${current_arch}" = "amd64" ]; then
+        curl -fsSL https://github.com/ViRb3/wgcf/releases/latest/download/wgcf_2.2.22_linux_amd64 -o wgcf
+    elif [ "${current_arch}" = "arm64" ]; then
+        curl -fsSL https://github.com/ViRb3/wgcf/releases/latest/download/wgcf_2.2.22_linux_arm64 -o wgcf
+    else
+        echo -e "${red}不受支持的架构，跳过自动化 WARP 配置。${plain}"
+        cd / && rm -rf /tmp/wgcf_install
+        return 0
+    fi
+    chmod +x wgcf
+
+    # 3. 动态向 Cloudflare 注册新设备并本地落地密钥对
+    ./wgcf register --accept-tos --quiet
+    ./wgcf generate --quiet
+
+    # 4. 关键诊断与处理：强行改造成纯净网口
+    if [ -f "wgcf-profile.conf" ]; then
+        mkdir -p /etc/wireguard/
+        
+        # 精准在 [Interface] 字段的正下方静默注入 Table = off，确保绝不抢占原生全局路由
+        sed '/\[Interface\]/a Table = off' wgcf-profile.conf > /etc/wireguard/wg0.conf
+        chmod 600 /etc/wireguard/wg0.conf
+        
+        # 5. 自动启动并固定开机自启
+        wg-quick down wg0 &> /dev/null
+        wg-quick up wg0
+        systemctl enable wg-quick@wg0
+        echo -e "${green}=== 专属网口 wg0 已经由脚本在本地动态填充并安全拉起！ ===${plain}"
+    else
+        echo -e "${red}警告：向 Cloudflare 动态获取专属凭证失败，请检查服务器网络。${plain}"
+    fi
+
+    # 清理垃圾文件
+    cd / && rm -rf /tmp/wgcf_install
 }
 
 install_s-ui() {
@@ -175,6 +185,9 @@ install_s-ui() {
     prepare_services
 
     systemctl enable s-ui --now
+
+    # 在面板主程序完全跑起来后，顺手执行 WARP 动态配置
+    auto_configure_warp
 
     echo -e "${green}s-ui ${last_version}${plain} 安装完成，现已启动并运行..."
     echo -e "你可以通过以下 URL 访问面板：${green}"
