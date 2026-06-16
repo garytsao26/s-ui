@@ -197,7 +197,6 @@ setup_warp_interface() {
 
     # ---------- 4. 启动 wg0 ----------
     echo -e "${yellow}[4/5] 启动 wg0 接口...${plain}"
-    # 若已存在则先关闭
     wg-quick down wg0 &>/dev/null || true
     if wg-quick up wg0; then
         echo -e "${green}wg0 接口已成功拉起！${plain}"
@@ -294,12 +293,11 @@ install_sui() {
     echo -e "${yellow}正在获取公网 IP...${plain}"
     PUBLIC_IP=$(curl -s --max-time 5 ip.sb || curl -s --max-time 5 ifconfig.me || curl -s --max-time 5 api.ipify.org)
     if [ -n "$PUBLIC_IP" ]; then
-        # 从 sui setting 输出中提取当前生效的端口和路径
-        PANEL_PORT=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "^port" | awk '{print $2}' | tr -dc '0-9')
-        PANEL_PATH=$(/usr/local/s-ui/sui setting -show 2>/dev/null | grep -i "^path" | awk '{print $2}' | tr -dc 'a-zA-Z0-9/_-')
+        SETTING_OUTPUT=$(/usr/local/s-ui/sui setting -show 2>/dev/null)
+        PANEL_PORT=$(echo "$SETTING_OUTPUT" | grep "Panel port" | awk -F: '{print $2}' | tr -d ' ')
+        PANEL_PATH=$(echo "$SETTING_OUTPUT" | grep "Panel path" | awk -F: '{print $2}' | tr -d ' ')
         [ -z "$PANEL_PORT" ] && PANEL_PORT="2095"
-        [ -z "$PANEL_PATH" ] && PANEL_PATH="app"
-        # 去掉首尾多余的斜杠
+        [ -z "$PANEL_PATH" ] && PANEL_PATH="/app/"
         PANEL_PATH=$(echo "$PANEL_PATH" | sed 's:^/*::;s:/*$::')
         echo -e "公网访问地址："
         echo -e "${green}http://${PUBLIC_IP}:${PANEL_PORT}/${PANEL_PATH}/${plain}"
