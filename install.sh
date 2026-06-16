@@ -59,104 +59,66 @@ install_base() {
 }
 
 config_after_install() {
-    echo -e "${yellow}正在迁移旧数据（若有）... ${plain}"
+    echo -e "${yellow}正在迁移... ${plain}"
     /usr/local/s-ui/sui migrate
 
-    if [[ ! -f "/usr/local/s-ui/db/s-ui.db" ]]; then
-        echo -e "\n${yellow}--- 配置 s-ui 面板及订阅初始化信息 ---${plain}"
-        echo -e "1) 手动输入自定义【面板账号/面板端口/订阅端口/订阅路径】"
-        echo -e "2) 使用系统默认随机【自动生成】"
-        read -p "请选择配置方式 (默认 1): " config_type
-        [[ -z "${config_type}" ]] && config_type="1"
+    echo -e "${yellow}安装/更新完成！出于安全考虑，建议修改面板设置 ${plain}"
+    read -p "是否继续修改设置 [y/n]？": config_confirm
+    if [[ "${config_confirm}" == "y" || "${config_confirm}" == "Y" ]]; then
+        echo -e "请输入${yellow}面板端口${plain}（留空则使用现有/默认值）："
+        read config_port
+        echo -e "请输入${yellow}面板路径${plain}（留空则使用现有/默认值）："
+        read config_path
 
-        if [[ "${config_type}" == "1" ]]; then
-            # 1. 面板用户名自定义
-            while true; do
-                read -p "请输入面板登录用户名: " usernameTemp
-                if [[ -z "${usernameTemp}" ]]; then
-                    echo -e "${red}用户名不能为空，请重新输入！${plain}"
-                else
-                    break
-                fi
-            done
+        # 订阅配置
+        echo -e "请输入${yellow}订阅端口${plain}（留空则使用现有/默认值）："
+        read config_subPort
+        echo -e "请输入${yellow}订阅路径${plain}（留空则使用现有/默认值）："
+        read config_subPath
 
-            # 2. 面板密码自定义
-            while true; do
-                read -p "请输入面板登录密码: " passwordTemp
-                if [[ -z "${passwordTemp}" ]]; then
-                    echo -e "${red}密码不能为空，请重新输入！${plain}"
-                else
-                    break
-                fi
-            done
+        # 设置配置
+        echo -e "${yellow}正在初始化，请稍候...${plain}"
+        params=""
+        [ -z "$config_port" ] || params="$params -port $config_port"
+        [ -z "$config_path" ] || params="$params -path $config_path"
+        [ -z "$config_subPort" ] || params="$params -subPort $config_subPort"
+        [ -z "$config_subPath" ] || params="$params -subPath $config_subPath"
+        /usr/local/s-ui/sui setting ${params}
 
-            # 3. 面板端口自定义
-            while true; do
-                read -p "请输入面板监听端口 (1-65535, 默认 2095): " portTemp
-                [[ -z "${portTemp}" ]] && portTemp="2095"
-                if [[ "$portTemp" =~ ^[0-9]+$ ]] && [ "$portTemp" -ge 1 ] && [ "$portTemp" -le 65535 ]; then
-                    break
-                else
-                    echo -e "${red}请输入合法的端口号 (1-65535)！${plain}"
-                fi
-            done
+        read -p "是否修改管理员账号密码 [y/n]？": admin_confirm
+        if [[ "${admin_confirm}" == "y" || "${admin_confirm}" == "Y" ]]; then
+            # 首个管理员账号密码
+            read -p "请设置用户名：" config_account
+            read -p "请设置密码：" config_password
 
-            # 4. 订阅端口自定义
-            while true; do
-                read -p "请输入订阅监听端口 (1-65535, 默认 2096): " subPortTemp
-                [[ -z "${subPortTemp}" ]] && subPortTemp="2096"
-                if [[ "$subPortTemp" =~ ^[0-9]+$ ]] && [ "$subPortTemp" -ge 1 ] && [ "$subPortTemp" -le 65535 ]; then
-                    break
-                else
-                    echo -e "${red}请输入合法的端口号 (1-65535)！${plain}"
-                fi
-            done
-
-            # 5. 订阅路径自定义
-            while true; do
-                read -p "请输入订阅路径 (例如 /sub , 默认随机生成): " subPathTemp
-                if [[ -z "${subPathTemp}" ]]; then
-                    subPathTemp="/"$(head -c 4 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
-                fi
-                # 确保路径以 / 开头
-                if [[ ! "$subPathTemp" =~ ^/ ]]; then
-                    subPathTemp="/${subPathTemp}"
-                fi
-                break
-            done
+            # 设置账号密码
+            echo -e "${yellow}正在初始化，请稍候...${plain}"
+            /usr/local/s-ui/sui admin -username ${config_account} -password ${config_password}
         else
-            # 自动生成所有随机信息
-            usernameTemp=$(head -c 6 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
-            passwordTemp=$(head -c 6 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
-            portTemp="2095"
-            subPortTemp="2096"
-            subPathTemp="/"$(head -c 6 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
-            echo -e "\n${green}已成功为您自动生成随机登录及订阅信息。${plain}"
+            echo -e "${yellow}当前管理员账号密码：${plain}"
+            /usr/local/s-ui/sui admin -show
         fi
-
-        echo -e "\n###############################################"
-        echo -e "${green}面板及订阅配置成功：${plain}"
-        echo -e "${green}面板用户名：${usernameTemp}${plain}"
-        echo -e "${green}面板密码  ：${passwordTemp}${plain}"
-        echo -e "${green}面板端口  ：${portTemp}${plain}"
-        echo -e "${green}订阅端口  ：${subPortTemp}${plain}"
-        echo -e "${green}订阅路径  ：${subPathTemp}${plain}"
-        echo -e "###############################################"
-        echo -e "${red}提示：日后若想修改这些信息，可随时输入 ${green}s-ui${red} 命令打开菜单重置${plain}\n"
-        
-        # 写入底层数据库和面板配置
-        /usr/local/s-ui/sui admin -username ${usernameTemp} -password ${passwordTemp}
-        /usr/local/s-ui/sui port -port ${portTemp}
-        /usr/local/s-ui/sui subport -port ${subPortTemp}
-        /usr/local/s-ui/sui subpath -path ${subPathTemp}
     else
-        echo -e "${yellow}检测到这是升级安装，已自动保留您原有的面板数据库、订阅等全部设置。${plain}"
+        echo -e "${red}已取消...${plain}"
+        if [[ ! -f "/usr/local/s-ui/db/s-ui.db" ]]; then
+            local usernameTemp=$(head -c 6 /dev/urandom | base64)
+            local passwordTemp=$(head -c 6 /dev/urandom | base64)
+            echo -e "这是全新安装，出于安全考虑将生成随机登录信息："
+            echo -e "###############################################"
+            echo -e "${green}用户名：${usernameTemp}${plain}"
+            echo -e "${green}密码：${passwordTemp}${plain}"
+            echo -e "###############################################"
+            echo -e "${red}如果忘记登录信息，可以输入 ${green}s-ui${red} 打开配置菜单${plain}"
+            /usr/local/s-ui/sui admin -username ${usernameTemp} -password ${passwordTemp}
+        else
+            echo -e "${red}这是升级安装，将保留旧设置；如果忘记登录信息，可以输入 ${green}s-ui${red} 打开配置菜单${plain}"
+        fi
     fi
 }
 
 prepare_services() {
     if [[ -f "/etc/systemd/system/sing-box.service" ]]; then
-        echo -e "${yellow}正在停止旧的 sing-box 服务... ${plain}"
+        echo -e "${yellow}正在停止 sing-box 服务... ${plain}"
         systemctl stop sing-box
         rm -f /usr/local/s-ui/bin/sing-box /usr/local/s-ui/bin/runSingbox.sh /usr/local/s-ui/bin/signal
     fi
@@ -172,11 +134,9 @@ prepare_services() {
 auto_configure_warp() {
     echo -e "${yellow}正在动态申请并配置当前服务器专属的 WARP 纯净网口...${plain}"
     
-    # 1. 创建并彻底进入临时工作目录
     mkdir -p /tmp/wgcf_install && cd /tmp/wgcf_install
     local current_arch=$(arch)
     
-    # 2. 匹配架构自动抓取官方精确下载路径
     if [ "${current_arch}" = "amd64" ]; then
         curl -fsSL "https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64" -o /tmp/wgcf_install/wgcf
     elif [ "${current_arch}" = "arm64" ]; then
@@ -187,29 +147,21 @@ auto_configure_warp() {
         return 0
     fi
     
-    # 3. 拦截诊断：检查文件是否下载成功
     if [ ! -f "/tmp/wgcf_install/wgcf" ]; then
         echo -e "${red}错误：下载 wgcf 核心工具失败，请检查服务器连接 Github 的网络。${plain}"
         cd / && rm -rf /tmp/wgcf_install
         return 0
     fi
     
-    # 4. 显式指定绝对路径赋予执行权限
     chmod +x /tmp/wgcf_install/wgcf
-
-    # 5. 动态向 Cloudflare 注册新设备并本地落地密钥对
     /tmp/wgcf_install/wgcf register --accept-tos
     /tmp/wgcf_install/wgcf generate
 
-    # 6. 关键配置：强行改造成不抢主网流量的分流网口
     if [ -f "/tmp/wgcf_install/wgcf-profile.conf" ]; then
         mkdir -p /etc/wireguard/
-        
-        # 精准在 [Interface] 字段的正下方静默注入 Table = off，确保绝不抢占原生全局路由
         sed '/\[Interface\]/a Table = off' /tmp/wgcf_install/wgcf-profile.conf > /etc/wireguard/wg0.conf
         chmod 600 /etc/wireguard/wg0.conf
         
-        # 7. 自动启动并固定开机自启
         wg-quick down wg0 &> /dev/null
         wg-quick up wg0
         systemctl enable wg-quick@wg0
@@ -218,7 +170,6 @@ auto_configure_warp() {
         echo -e "${red}警告：向 Cloudflare 动态获取专属凭证失败，请检查服务器网络。${plain}"
     fi
 
-    # 清理垃圾文件
     cd / && rm -rf /tmp/wgcf_install
 }
 
@@ -267,7 +218,7 @@ install_s-ui() {
 
     systemctl enable s-ui --now
 
-    # 执行 WARP 自动化配置
+    # 仅在脚本末尾无缝插入独立配置网口，不再改动你的原有任何前端逻辑
     auto_configure_warp
 
     echo -e "${green}s-ui ${last_version}${plain} 安装完成，现已启动并运行..."
